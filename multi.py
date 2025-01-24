@@ -28,62 +28,69 @@ sounds = {
     'l': pygame.mixer.Sound('13.mp3')   # ド
 }
 
-# 再生中のサウンド
-current_sound = None
+# 押されているキーを管理するセット
+pressed_keys = set()
 
 # === 超音波センサーで距離を測定する関数 ===
 def get_distance():
     GPIO.output(TRIG, True)
     time.sleep(0.00001)
     GPIO.output(TRIG, False)
-    
+
     while GPIO.input(ECHO) == 0:
         start_time = time.time()
     while GPIO.input(ECHO) == 1:
         end_time = time.time()
-    
+
     distance = (end_time - start_time) * 34300 / 2  # 距離を計算 (cm)
     return distance
 
 # === 音量を距離に基づいて調整する関数 ===
 def adjust_volume():
-    global current_sound
-    min_volume = 0.2
-    max_volume = 0.8
+    min_volume = 0.2  # 最小音量
+    max_volume = 0.8  # 最大音量
+
     while True:
-        if current_sound:
-            dist = get_distance()
-            volume = 1 - dist / 5
-            volume = max(min_volume, min(max_volume, volume))
-            current_sound.set_volume(volume)
-            print(f"Distance: {dist:.2f} cm, Volume: {volume:.2f}")
+        for key in pressed_keys:
+            dist = get_distance()  # 超音波センサーで距離を取得
+            # 音量を計算して制限
+            volume = max(min_volume, min(max_volume, 1 - dist / 50))
+            sounds[key].set_volume(volume)  # 個別の音量を調整
+            print(f"Key: {key}, Distance: {dist:.2f} cm, Volume: {volume:.2f}")
         time.sleep(0.1)
 
-# === キーボード入力を検知する関数 ===
+# === キーボードのキー押下時の処理 ===
 def on_press(key):
-    global current_sound
     try:
-        if key.char in sounds:
-            if current_sound:
-                current_sound.stop()  # 再生中の音を停止
-            current_sound = sounds[key.char]
-            current_sound.play()
+        if key.char in sounds and key.char not in pressed_keys:
+            pressed_keys.add(key.char)
+            sounds[key.char].play(loops=-1)  # 音をループ再生
+            print(f"Playing sound for key: {key.char}")
+    except AttributeError:
+        pass
+
+# === キーボードのキー離した時の処理 ===
+def on_release(key):
+    try:
+        if key.char in sounds and key.char in pressed_keys:
+            pressed_keys.remove(key.char)
+            sounds[key.char].stop()  # 音を停止
+            print(f"Stopped sound for key: {key.char}")
     except AttributeError:
         pass
 
 # === メイン処理 ===
 try:
-    # 音量調整を別スレッドで実行
+    # 音量調整スレッドを開始
     import threading
     volume_thread = threading.Thread(target=adjust_volume, daemon=True)
     volume_thread.start()
-    
-    # キーボードリスナーの開始
-    with keyboard.Listener(on_press=on_press) as listener:
+
+    # キーボードリスナーを開始
+    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
         listener.join()
 
 except KeyboardInterrupt:
     print("\n終了します...")
 finally:
     GPIO.cleanup()
-
